@@ -18,7 +18,7 @@ TONE_INSTRUCTIONS = {
 
 
 def _build_llm():
-    return Ollama(model="llama3", base_url=OLLAMA_BASE_URL, request_timeout=180.0)
+    return Ollama(model="llama3", base_url=OLLAMA_BASE_URL)
 
 
 def run_writer(outline: str, keyword: str, tone: str = "informative") -> str:

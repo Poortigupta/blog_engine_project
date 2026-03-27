@@ -11,11 +11,11 @@ If SearXNG is unavailable, falls back to DuckDuckGo HTML search.
 import asyncio
 import httpx
 from bs4 import BeautifulSoup
-from urllib.parse import urlencode, quote_plus
-import re
+from urllib.parse import parse_qs, unquote, urlparse
 
 SEARXNG_URL = "http://localhost:8888/search"
 DDG_URL = "https://html.duckduckgo.com/html/"
+DDG_LITE_URL = "https://lite.duckduckgo.com/lite/"
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -25,6 +25,27 @@ HEADERS = {
 }
 MAX_RESULTS = 3
 REQUEST_TIMEOUT = 15.0
+
+
+def _normalize_url(raw: str) -> str:
+    """Normalize raw search links into absolute HTTP(S) URLs."""
+    if not raw:
+        return ""
+    if raw.startswith("//"):
+        return f"https:{raw}"
+    if raw.startswith("http://") or raw.startswith("https://"):
+        return raw
+    return ""
+
+
+def _extract_uddg_target(raw: str) -> str:
+    """Decode DuckDuckGo redirect links and return the target URL if present."""
+    if "uddg=" not in raw:
+        return ""
+    target = parse_qs(urlparse(raw).query).get("uddg", [])
+    if not target:
+        return ""
+    return _normalize_url(unquote(target[0]))
 
 
 async def _fetch(client: httpx.AsyncClient, url: str) -> str | None:
@@ -57,12 +78,38 @@ async def _search_ddg(keyword: str, client: httpx.AsyncClient) -> list[str]:
             headers={**HEADERS, "Content-Type": "application/x-www-form-urlencoded"},
             timeout=10.0,
         )
+        # DDG can return a challenge page (often status 202) that contains no result links.
+        if resp.status_code != 200:
+            return []
+
         soup = BeautifulSoup(resp.text, "lxml")
         links = []
-        for a in soup.select("a.result__url"):
+        for a in soup.select("a.result__a, a.result__url"):
             href = a.get("href", "")
-            if href.startswith("http"):
-                links.append(href)
+            normalized = _normalize_url(href)
+            if normalized:
+                links.append(normalized)
+            if len(links) >= MAX_RESULTS:
+                break
+        return links
+    except Exception:
+        return []
+
+
+async def _search_ddg_lite(keyword: str, client: httpx.AsyncClient) -> list[str]:
+    """Fallback: DuckDuckGo Lite search with redirect-link decoding."""
+    try:
+        resp = await client.get(DDG_LITE_URL, params={"q": keyword}, timeout=10.0)
+        if resp.status_code != 200:
+            return []
+
+        soup = BeautifulSoup(resp.text, "lxml")
+        links = []
+        for a in soup.select("a[href]"):
+            href = a.get("href", "")
+            target = _extract_uddg_target(href)
+            if target:
+                links.append(target)
             if len(links) >= MAX_RESULTS:
                 break
         return links
@@ -110,6 +157,8 @@ async def scrape_serp(keyword: str) -> dict:
         urls = await _search_searxng(keyword, client)
         if not urls:
             urls = await _search_ddg(keyword, client)
+        if not urls:
+            urls = await _search_ddg_lite(keyword, client)
 
         if not urls:
             # Graceful degradation — return empty payload

@@ -25,7 +25,7 @@ def _keyword_density(text: str, keyword: str) -> float:
 
 
 def _build_llm():
-    return Ollama(model="llama3", base_url=OLLAMA_BASE_URL, request_timeout=120.0)
+    return Ollama(model="llama3", base_url=OLLAMA_BASE_URL)
 
 
 def run_seo_editor(draft: str, keyword: str) -> str:

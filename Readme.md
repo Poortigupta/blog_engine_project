@@ -191,8 +191,56 @@ If SearXNG is unavailable, the scraper **automatically falls back** to DuckDuckG
     "detection_method": "heuristic",
     "detection_confidence": "medium",
     "word_count": 1723,
-    "heading_count": 7
+    "heading_count": 7,
+    "pipeline_warnings": ["writer_timeout_fallback"],
+    "stage_status": {
+      "scrape": "ok",
+      "research": "ok",
+      "writer": "fallback_timeout",
+      "seo": "ok",
+      "readability": "ok",
+      "ai_detection": "ok"
+    },
+    "stage_timings_ms": {
+      "scrape": 2260,
+      "research": 18420,
+      "writer": 90014,
+      "seo": 12011,
+      "readability": 102,
+      "ai_detection": 2132
+    },
+    "total_time_ms": 124939
   }
+}
+```
+
+### `POST /api/generate/debug`
+Returns only diagnostics (no full blog content) for quick bottleneck checks.
+
+**Response:**
+```json
+{
+  "keyword": "best productivity apps for developers",
+  "tone": "informative",
+  "pipeline_warnings": ["writer_timeout_fallback"],
+  "stage_status": {
+    "scrape": "ok",
+    "research": "ok",
+    "writer": "fallback_timeout",
+    "seo": "ok",
+    "readability": "ok",
+    "ai_detection": "ok"
+  },
+  "stage_timings_ms": {
+    "scrape": 2260,
+    "research": 18420,
+    "writer": 90014,
+    "seo": 12011,
+    "readability": 102,
+    "ai_detection": 2132
+  },
+  "total_time_ms": 124939,
+  "word_count": 1723
 }
 ```
 
@@ -208,12 +256,14 @@ If SearXNG is unavailable, the scraper **automatically falls back** to DuckDuckG
 | Stage | Backend timeout | Frontend axios timeout |
 |-------|----------------|----------------------|
 | SERP scrape | 30s | — |
-| Research agent | 120s | — |
-| Writer agent | 180s | — |
-| SEO agent | 120s | — |
-| Total pipeline | ~7.5 min max | 10 min (600,000ms) |
+| Research agent | 60s | — |
+| Writer agent | 90s | — |
+| SEO agent | 60s | — |
+| Validation (readability/AI detection) | 20s / 45s | — |
+| Total pipeline | ~4.5 min max | 10 min (600,000ms) |
 
-If a stage times out, FastAPI returns `504 Gateway Timeout` with a descriptive message.
+If the SERP stage times out, FastAPI returns `504 Gateway Timeout`.
+If research/writer/seo/validation stages fail or time out, the API returns a fallback-generated blog and includes warnings in `metrics.pipeline_warnings`.
 
 ---
 
@@ -274,6 +324,13 @@ blog_engine_project/
 
 **Generation takes >10 minutes**
 → llama3 on CPU is slow. Consider using `llama3:8b` (smaller) or running with GPU via CUDA.
+
+**Request keeps loading forever / no output**
+→ Usually caused by a stuck or old backend process. Restart backend cleanly:
+1. Stop the running server terminal (`Ctrl+C`).
+2. Start again from backend venv: `uvicorn main:app --reload --port 8000`.
+3. Verify quickly: `curl http://localhost:8000/health` then `POST /api/scrape` before `POST /api/generate`.
+4. In frontend, set request timeout to at least 300000-600000ms for generate calls.
 
 **HuggingFace model download fails**
 → The AI detector gracefully falls back to a heuristic scorer. No action needed.

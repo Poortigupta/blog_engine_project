@@ -11,7 +11,7 @@ OLLAMA_BASE_URL = "http://localhost:11434"
 
 
 def _build_llm():
-    return Ollama(model="llama3", base_url=OLLAMA_BASE_URL, request_timeout=120.0)
+    return Ollama(model="llama3", base_url=OLLAMA_BASE_URL)
 
 
 def run_research(serp_data: dict, keyword: str) -> str:
