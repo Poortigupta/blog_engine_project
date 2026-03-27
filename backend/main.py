@@ -276,13 +276,25 @@ async def generate_blog(req: GenerateRequest):
         stage_status["seo"] = "fallback_error"
     stage_timings_ms["seo"] = _elapsed_ms(seo_start)
 
-    # Phase 3 — Validation
+    # Phase 3 — Validation (run concurrently to reduce tail latency)
     readability_start = time.perf_counter()
-    try:
-        readability = await asyncio.wait_for(
+    ai_start = time.perf_counter()
+
+    readability_task = asyncio.create_task(
+        asyncio.wait_for(
             asyncio.to_thread(get_readability_scores, final_blog),
             timeout=READABILITY_TIMEOUT_SECONDS,
         )
+    )
+    ai_task = asyncio.create_task(
+        asyncio.wait_for(
+            asyncio.to_thread(get_ai_detection_score, final_blog),
+            timeout=AI_DETECTION_TIMEOUT_SECONDS,
+        )
+    )
+
+    try:
+        readability = await readability_task
         stage_status["readability"] = "ok"
     except Exception:
         readability = {
@@ -299,12 +311,8 @@ async def generate_blog(req: GenerateRequest):
         stage_status["readability"] = "fallback_error"
     stage_timings_ms["readability"] = _elapsed_ms(readability_start)
 
-    ai_start = time.perf_counter()
     try:
-        ai_scores = await asyncio.wait_for(
-            asyncio.to_thread(get_ai_detection_score, final_blog),
-            timeout=AI_DETECTION_TIMEOUT_SECONDS,
-        )
+        ai_scores = await ai_task
         stage_status["ai_detection"] = "ok"
     except Exception:
         ai_scores = {
@@ -349,15 +357,48 @@ async def validate_text(body: dict):
     text = body.get("text", "")
     if not text:
         raise HTTPException(status_code=400, detail="'text' field is required.")
-    readability = await asyncio.wait_for(
-        asyncio.to_thread(get_readability_scores, text),
-        timeout=READABILITY_TIMEOUT_SECONDS,
+
+    warnings: list[str] = []
+    readability_task = asyncio.create_task(
+        asyncio.wait_for(
+            asyncio.to_thread(get_readability_scores, text),
+            timeout=READABILITY_TIMEOUT_SECONDS,
+        )
     )
-    ai_scores = await asyncio.wait_for(
-        asyncio.to_thread(get_ai_detection_score, text),
-        timeout=AI_DETECTION_TIMEOUT_SECONDS,
+    ai_task = asyncio.create_task(
+        asyncio.wait_for(
+            asyncio.to_thread(get_ai_detection_score, text),
+            timeout=AI_DETECTION_TIMEOUT_SECONDS,
+        )
     )
-    return {**readability, **ai_scores}
+
+    try:
+        readability = await readability_task
+    except Exception:
+        readability = {
+            "readability_score": 0,
+            "flesch_reading_ease": 0.0,
+            "flesch_kincaid_grade": 0.0,
+            "gunning_fog": 0.0,
+            "smog_index": 0.0,
+            "automated_readability_index": 0.0,
+            "coleman_liau_index": 0.0,
+            "dale_chall_readability_score": 0.0,
+        }
+        warnings.append("readability_error_defaulted")
+
+    try:
+        ai_scores = await ai_task
+    except Exception:
+        ai_scores = {
+            "ai_detection_percentage": 50.0,
+            "naturalness_score": 50.0,
+            "detection_method": "fallback",
+            "detection_confidence": "low",
+        }
+        warnings.append("ai_detection_error_defaulted")
+
+    return {**readability, **ai_scores, "validation_warnings": warnings}
 
 
 @app.post("/api/generate/debug", tags=["Generation"])

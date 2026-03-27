@@ -249,6 +249,8 @@ Returns only diagnostics (no full blog content) for quick bottleneck checks.
 |-------|------|-------------|
 | text | string | Any text to analyze |
 
+Returns readability + AI metrics and `validation_warnings` when any validation stage falls back.
+
 ---
 
 ## 6. Timeouts
@@ -264,6 +266,7 @@ Returns only diagnostics (no full blog content) for quick bottleneck checks.
 
 If the SERP stage times out, FastAPI returns `504 Gateway Timeout`.
 If research/writer/seo/validation stages fail or time out, the API returns a fallback-generated blog and includes warnings in `metrics.pipeline_warnings`.
+The `/api/validate` endpoint also uses bounded timeouts and returns `validation_warnings` if a scoring stage falls back.
 
 ---
 
