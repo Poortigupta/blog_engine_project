@@ -1,2 +1,9 @@
-blogEngine
-__pycache__
+blogEngine/
+__pycache__/
+frontend/node_modules/
+frontend/node_modules/*
+frontend/.next/
+frontend/.env.local
+node_modules
+logs
+.env.local.example
