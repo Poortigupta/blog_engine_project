@@ -4,8 +4,11 @@ Ingests SERP data and produces a structured outline covering gaps.
 Uses Ollama (llama3) as the local LLM backend.
 """
 
+import logging
 from crewai import Agent, Task, Crew
 from langchain_community.llms import Ollama
+
+logger = logging.getLogger("blog_engine.research_agent")
 
 OLLAMA_BASE_URL = "http://localhost:11434"
 
@@ -76,5 +79,13 @@ Return ONLY the markdown outline. No preamble, no explanation.
     )
 
     crew = Crew(agents=[researcher], tasks=[task], verbose=False)
+
+    # ── BUG FIX ───────────────────────────────────────────────────────────────
+    # CrewAI ≥ 0.28 returns a CrewOutput object, not a plain str.
+    # Calling str() on it serialises it correctly; strip removes whitespace.
+    # We also log the result length so failures are visible in server logs.
+    # ──────────────────────────────────────────────────────────────────────────
     result = crew.kickoff()
-    return str(result)
+    output = str(result).strip()
+    logger.info("Research agent finished | output_chars=%d", len(output))
+    return output

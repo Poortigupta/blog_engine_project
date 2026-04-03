@@ -4,21 +4,25 @@ Reviews the draft blog for keyword density compliance, meta optimization,
 and structural SEO rules. Returns the final polished markdown.
 """
 
+import logging
 import re
 from crewai import Agent, Task, Crew
 from langchain_community.llms import Ollama
 
-OLLAMA_BASE_URL = "http://localhost:11434"
-TARGET_DENSITY_MIN = 0.015   # 1.5%
-TARGET_DENSITY_MAX = 0.030   # 3.0%
+logger = logging.getLogger("blog_engine.seo_agent")
+
+OLLAMA_BASE_URL   = "http://localhost:11434"
+TARGET_DENSITY_MIN = 0.015   # 1.5 %
+TARGET_DENSITY_MAX = 0.030   # 3.0 %
 
 
 def _keyword_density(text: str, keyword: str) -> float:
     """Calculate keyword density as a ratio."""
-    words = re.findall(r"\w+", text.lower())
+    words    = re.findall(r"\w+", text.lower())
     kw_words = re.findall(r"\w+", keyword.lower())
     count = sum(
-        1 for i in range(len(words) - len(kw_words) + 1)
+        1
+        for i in range(len(words) - len(kw_words) + 1)
         if words[i : i + len(kw_words)] == kw_words
     )
     return count / max(len(words), 1)
@@ -39,15 +43,14 @@ def run_seo_editor(draft: str, keyword: str) -> str:
     Returns:
         Final, SEO-polished markdown blog
     """
-    density = _keyword_density(draft, keyword)
+    density    = _keyword_density(draft, keyword)
     word_count = len(draft.split())
 
-    density_note = ""
     if density < TARGET_DENSITY_MIN:
         current_count = int(density * word_count)
-        target_count = int(TARGET_DENSITY_MIN * word_count)
-        needed = target_count - current_count
-        density_note = (
+        target_count  = int(TARGET_DENSITY_MIN * word_count)
+        needed        = target_count - current_count
+        density_note  = (
             f"⚠️  DENSITY TOO LOW: '{keyword}' appears ~{current_count} times "
             f"({density*100:.2f}%). You MUST naturally add it ~{needed} more times to reach 1.5%."
         )
@@ -104,20 +107,26 @@ YOUR TASKS:
     )
 
     crew = Crew(agents=[seo_editor], tasks=[task], verbose=False)
+
+    # ── BUG FIX ───────────────────────────────────────────────────────────────
+    # CrewAI ≥ 0.28 returns a CrewOutput object. Coerce to str and strip.
+    # ──────────────────────────────────────────────────────────────────────────
     result = crew.kickoff()
-    return str(result)
+    output = str(result).strip()
+    logger.info("SEO agent finished | output_chars=%d density=%.2f%%", len(output), density * 100)
+    return output
 
 
 def compute_seo_score(text: str, keyword: str) -> int:
     """
     Heuristic SEO score (0–100) based on:
-      - Keyword density (30 pts)
-      - Word count (20 pts)
-      - H2 count (20 pts)
-      - Bullet point usage (15 pts)
-      - Bold term usage (15 pts)
+      - Keyword density  (30 pts)
+      - Word count       (20 pts)
+      - H2 count         (20 pts)
+      - Bullet points    (15 pts)
+      - Bold terms       (15 pts)
     """
-    score = 0
+    score   = 0
     density = _keyword_density(text, keyword)
 
     # Density (0-30)

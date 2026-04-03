@@ -63,6 +63,9 @@ cd blog_engine_project/backend
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 
+# this project virtual env path 
+blogEngine\Scripts\activate
+
 # Install dependencies
 pip install -r requirements.txt
 

@@ -4,8 +4,11 @@ Takes the research outline and drafts a comprehensive, GEO-optimized blog.
 Enforces Snippet Readiness Probability through structured formatting.
 """
 
+import logging
 from crewai import Agent, Task, Crew
 from langchain_community.llms import Ollama
+
+logger = logging.getLogger("blog_engine.writer_agent")
 
 OLLAMA_BASE_URL = "http://localhost:11434"
 
@@ -83,5 +86,11 @@ Return ONLY the markdown blog. No preamble.
     )
 
     crew = Crew(agents=[writer], tasks=[task], verbose=False)
+
+    # ── BUG FIX ───────────────────────────────────────────────────────────────
+    # CrewAI ≥ 0.28 returns a CrewOutput object. Coerce to str and strip.
+    # ──────────────────────────────────────────────────────────────────────────
     result = crew.kickoff()
-    return str(result)
+    output = str(result).strip()
+    logger.info("Writer agent finished | output_chars=%d", len(output))
+    return output

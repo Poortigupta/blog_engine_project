@@ -5,6 +5,7 @@ Run with: uvicorn main:app --reload --port 8000
 
 import asyncio
 import time
+import re
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -28,7 +29,7 @@ AI_DETECTION_TIMEOUT_SECONDS = 45.0
 
 app = FastAPI(
     title="Blog Generation Engine API",
-    description="AI-powered, GEO-optimized blog generation using CrewAI + Ollama.",
+    description="AI-powered, GEO-optimized blog generation",
     version="1.0.0",
 )
 
@@ -92,7 +93,48 @@ def _fallback_outline(keyword: str, serp_data: dict) -> str:
     return "\n\n".join([title, "## Introduction\n- Briefly introduce the problem and promise a practical guide."] + sections)
 
 
-def _fallback_draft(keyword: str, tone: str, outline: str) -> str:
+def _split_sentences(text: str) -> list[str]:
+    """Extract reasonably informative sentences from noisy SERP text."""
+    cleaned = re.sub(r"\s+", " ", text or "").strip()
+    if not cleaned:
+        return []
+    chunks = re.split(r"(?<=[.!?])\s+", cleaned)
+    return [c.strip() for c in chunks if len(c.strip()) >= 70]
+
+
+def _best_evidence_for_heading(heading: str, sentences: list[str], used_idx: set[int], keyword: str) -> str:
+    """Pick a sentence that best matches the current heading/keyword."""
+    heading_tokens = set(re.findall(r"\w+", heading.lower()))
+    keyword_tokens = set(re.findall(r"\w+", keyword.lower()))
+    stopwords = {
+        "the", "a", "an", "and", "or", "to", "for", "of", "in", "on", "with", "is", "are", "by", "how", "what",
+    }
+    heading_tokens = {t for t in heading_tokens if t not in stopwords and len(t) > 2}
+    keyword_tokens = {t for t in keyword_tokens if t not in stopwords and len(t) > 2}
+
+    best_idx = -1
+    best_score = -1
+    for i, sentence in enumerate(sentences[:40]):
+        if i in used_idx:
+            continue
+        tokens = set(re.findall(r"\w+", sentence.lower()))
+        score = len(tokens & heading_tokens) * 3 + len(tokens & keyword_tokens)
+        if score > best_score:
+            best_score = score
+            best_idx = i
+
+    if best_idx >= 0:
+        used_idx.add(best_idx)
+        return sentences[best_idx]
+
+    for i, sentence in enumerate(sentences[:40]):
+        if i not in used_idx:
+            used_idx.add(i)
+            return sentence
+    return ""
+
+
+def _fallback_draft(keyword: str, tone: str, outline: str, serp_data: Optional[dict] = None) -> str:
     """Create a deterministic markdown draft when the writer agent fails."""
     heading_lines = [line.strip() for line in outline.splitlines() if line.startswith("## ")]
     if not heading_lines:
@@ -117,13 +159,24 @@ def _fallback_draft(keyword: str, tone: str, outline: str) -> str:
         "> **Quick Answer:** The best approach to **{keyword}** is to combine clear criteria, practical testing, and continuous refinement.",
     ]
 
+    serp_sentences = _split_sentences((serp_data or {}).get("combined_text", ""))
+    used_sentence_indexes: set[int] = set()
+
     for h2 in heading_lines[:8]:
         heading = h2.removeprefix("## ").strip()
+        evidence = _best_evidence_for_heading(heading, serp_sentences, used_sentence_indexes, keyword)
+        evidence_block = (
+            f"\n\nSource insight: {evidence}"
+            if evidence
+            else "\n\nSource insight: Prioritize testing assumptions with real examples before scaling your approach."
+        )
         blocks.append(
             "\n" + h2 + "\n"
             + f"**{heading}** is a critical part of succeeding with **{keyword}**. "
             + "Start by defining goals, selecting measurable criteria, and documenting assumptions before execution. "
-            + "Then iterate based on outcomes and feedback to improve reliability and impact.\n\n"
+            + "Then iterate based on outcomes and feedback to improve reliability and impact."
+            + evidence_block
+            + "\n\n"
             + "- Define the target outcome and constraints\n"
             + "- Test with small experiments before scaling\n"
             + "- Track quality, risk, and business value\n"
@@ -247,11 +300,11 @@ async def generate_blog(req: GenerateRequest):
             raise ValueError("Writer agent returned empty draft.")
         stage_status["writer"] = "ok"
     except asyncio.TimeoutError:
-        draft_blog = _fallback_draft(keyword, tone, outline)
+        draft_blog = _fallback_draft(keyword, tone, outline, serp_data)
         pipeline_warnings.append("writer_timeout_fallback")
         stage_status["writer"] = "fallback_timeout"
     except Exception:
-        draft_blog = _fallback_draft(keyword, tone, outline)
+        draft_blog = _fallback_draft(keyword, tone, outline, serp_data)
         pipeline_warnings.append("writer_error_fallback")
         stage_status["writer"] = "fallback_error"
     stage_timings_ms["writer"] = _elapsed_ms(writer_start)
@@ -330,7 +383,23 @@ async def generate_blog(req: GenerateRequest):
         **ai_scores,
         "word_count": len(final_blog.split()),
         "heading_count": final_blog.count("\n#"),
+        "content_source": (
+            "agent"
+            if all(stage_status.get(s) == "ok" for s in ("research", "writer", "seo"))
+            else "fallback_or_mixed"
+        ),
         "pipeline_warnings": pipeline_warnings,
+        "metrics_basis": {
+            "readability": "Computed from markdown-stripped final_blog text via textstat metrics.",
+            "ai_detection": "Computed by HuggingFace detector model when available, otherwise heuristic linguistic signals.",
+            "word_count": "Number of whitespace-separated tokens in final_blog.",
+            "heading_count": "Count of markdown heading markers by counting newline-prefixed '#'.",
+            "source_snapshot": {
+                "serp_url_count": len(serp_data.get("source_urls", [])),
+                "serp_heading_count": len(serp_data.get("headings", [])),
+                "serp_text_chars": len(serp_data.get("combined_text", "")),
+            },
+        },
         "stage_timings_ms": stage_timings_ms,
         "stage_status": stage_status,
         "total_time_ms": _elapsed_ms(pipeline_start),
